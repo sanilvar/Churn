@@ -1,0 +1,427 @@
+---
+title: "Analisis descriptivo Datos-churn"
+author: "Xyomi DIaz - Nadia Ñustes - Ilvar Dario Sanabria"
+date: "13/10/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = 'C:\\Users\\User\\Documents\\EspAnalitica\\1er Semestre\\Caso de Analisis\\Datos\\Bases Proyecto\\')
+
+```
+
+## Importamos las librerias necesarias para el proyecto
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(data.table)
+library(ggcorrplot)
+library(dplyr)
+library(sqldf)
+```
+
+## Establecemos el directorio de trabajo
+
+```{r}
+getwd()
+```
+
+## Importamos cada una de las BD (Cñientes, Transacciones, PQR, Clientes Churn, Categorias)
+
+```{r}
+#De esta BD se eliminaron 5.173 registros que estaban duplicados 
+PQR = read.csv('PQR_depurado.txt',sep='|',encoding = 'utf-8')
+names(PQR)= c('ID','FECHA','TIPO_PQR','CANTIDAD_PQR')
+head(PQR)
+
+Trx = read.csv('tx_prueba.txt',sep='|',encoding = 'utf-8')
+names(Trx)= c('FECHA','MES','ID','AMBIENTE','MOTIVO_RESPUESTA',
+              'TIOP_PRODUCTO','FRANQUICIA','TRX','VALOR')
+head(Trx)
+
+Clientes = read.csv('clientes.txt',sep='|',encoding = 'utf-8')
+head(Clientes)
+
+Clientes_Churn = read.csv('Clientes_Churn.txt',sep='|',encoding = 'utf-8')
+Clientes_Churn=rename(Clientes_Churn,FECHA=FECHA_CHURN)
+Clientes_Churn$CHURN=factor(Clientes_Churn$CHURN)
+Clientes_Churn$MES_CHURN=factor(Clientes_Churn$MES_CHURN)
+summary(Clientes_Churn)
+```
+
+## Unimoslas BD, usando el ID del cliente
+```{r}
+##Cantidad de clientes churn = 11095 
+TrxNew = left_join(Trx,Clientes, by=c('ID'))
+head(TrxNew)
+
+TrxNew = left_join(TrxNew, Clientes_Churn, by=c('ID','FECHA'))
+head(TrxNew)
+
+TrxNew = left_join(TrxNew, PQR, by=c('ID','FECHA'))
+head(TrxNew)
+```
+
+
+## Asignamos valor a los Clientes No Churn y los que no tienen PQR
+```{r}
+TrxNew$CHURN = factor(ifelse(is.na(TrxNew$CHURN),0,TrxNew$CHURN))
+TrxNew$CANTIDAD_PQR = ifelse(is.na(TrxNew$CANTIDAD_PQR),0,TrxNew$CANTIDAD_PQR)
+```
+
+
+# Se carga una tabla resumida de las categorias para cruzarla con la BD de Transacciones
+```{r}
+agrupadas = read.csv2("categorias.txt", sep = "\t")
+agrupadas
+
+#Unimos la tabal de categorias con la tabla de transacciones
+datos=  sqldf('SELECT a.FECHA, a.MES, a.ID, a.AMBIENTE, a.MOTIVO_RESPUESTA, 
+          a.TIOP_PRODUCTO, a.FRANQUICIA, a.TRX,a.VALOR, a.MES_CREACION, a.BANCO, 
+          a.REGIONAL, a.CIUDAD, b.AGRUPADO AS CATEGORIA, a.UNIDAD, a.EDAD_MES, 
+          a.MES_CHURN, a.CHURN, a.TIPO_PQR, a.CANTIDAD_PQR
+        FROM TrxNew a
+        LEFT JOIN agrupadas b
+        ON a.CATEGORIA = b.CATEGORIA')
+```
+
+### Se escribe la nueva tabla de transacciones (trx + Clientes + Churn + PQR) a un archivo
+```{r}
+write.csv(datos,'TransaccionesFinal.txt')
+```
+
+
+## Leemos el archivo de datos
+```{r}
+datos = read.csv('TransaccionesFinal.txt',sep=',',encoding = 'utf-8',header = T)
+
+head(datos)
+
+## Analisis de Datos
+summary(datos)
+```
+
+## Tomamos una muestra de los datos usando Muestreo - MAS
+```{r}
+
+count(datos)
+
+N = 3034221
+n = 300000
+
+set.seed(300000)
+
+x=sample(dim(datos)[1],n,replace=FALSE) 
+muestra= datos[x,]
+muestra
+```
+
+## Analizamos los clientes por la categoria del comercio
+```{r}
+
+gr_categoria= muestra %>%
+  group_by(CATEGORIA) %>% 
+  summarise(STRX = sum(TRX), SVALOR=sum(VALOR/1000000))
+
+
+ggplot(gr_categoria,aes(y=CATEGORIA,x=STRX))+
+  geom_point() +
+  scale_x_log10() + 
+  labs(
+    title = "Cantidad de Transacciones por Categoria",
+    subtitle = "",
+    caption = "Muestra de 300 mil transacciones ",
+    x = "Cantidad de Transacciones",
+    y = "Categoria del Cliente"
+  )
+```
+
+## Analizamos los clientes por Franquicia
+```{r}
+gr_franquicia= muestra %>%
+  group_by(FRANQUICIA, TIOP_PRODUCTO) %>% 
+  summarise(STRX = sum(TRX), SVALOR=sum(VALOR/1000000))
+
+ggplot(gr_franquicia,aes(y=STRX/1000,x=reorder(FRANQUICIA,-STRX), fill=TIOP_PRODUCTO))+
+  geom_bar(stat="identity", position="dodge") +
+  labs(
+    title = "Cantidad de Transacciones por Franquicia",
+    subtitle = "",
+    caption = "Muestra de 300 mil transacciones ",
+    y = "Cantidad de Transacciones/1000",
+    x = "Franquicia"
+  )
+```
+
+```{r}
+ggplot(gr_franquicia,aes(y=SVALOR,x=reorder(FRANQUICIA,-SVALOR), fill=FRANQUICIA))+
+  geom_bar(stat="identity", position="dodge") +
+  labs(
+    title = "Valor de las Transacciones por Franquicia",
+    subtitle = "",
+    caption = "Muestra de 300 mil transacciones ",
+    y = "Valor de las Transacciones (en millones de pesos)",
+    x = "Franquicia"
+  )
+```
+
+## Analizamos los clientes por la Tipo de Producto
+```{r}
+ggplot(muestra,aes(TRX,fill=TIOP_PRODUCTO))+
+  geom_histogram(binwidth = 20) +
+  labs(
+    title = "Cantidad de Transacciones por Categoria",
+    subtitle = "",
+    caption = "Muestra de 300 mil transacciones ",
+    x = "Cantidad de Transacciones",
+    y = "Categoria del Cliente"
+  )
+```
+
+
+## Analizamos las Trx y Valores en la liena de tiempo
+```{r}
+gr_fecha= muestra %>%
+  group_by(MES, FRANQUICIA,AMBIENTE) %>% 
+  summarise(STRX = sum(TRX), SVALOR=sum(VALOR/1000000))
+
+ggplot(gr_fecha,aes(y=SVALOR,x=MES, fill=FRANQUICIA))+
+  geom_bar(stat="identity") +
+  labs(
+    title = "Valor de las Transacciones por Mes",
+    subtitle = "",
+    caption = "Muestra de 300 mil transacciones ",
+    y = "Valor de las Transacciones (en millones de pesos)",
+    x = "Mes"
+  )
+```
+
+```{r}
+ggplot(gr_fecha,aes(y=STRX,x=MES, fill=FRANQUICIA))+
+  geom_bar(stat="identity") +
+  labs(
+    title = "Cantidad de Transacciones por Mes",
+    subtitle = "",
+    caption = "Muestra de 300 mil transacciones ",
+    y = "Cantidad de Transacciones",
+    x = "Mes"
+  )
+```
+
+## Relación de Franquicias con el ambiente
+```{r}
+ggplot(gr_fecha,aes(y=STRX,x=reorder(FRANQUICIA,-STRX), fill=AMBIENTE))+
+  geom_bar(stat="identity") +
+  labs(
+    title = "Cantidad de Transacciones por Mes",
+    subtitle = "",
+    caption = "Muestra de 300 mil transacciones ",
+    y = "Cantidad de Transacciones",
+    x = "Franquicia"
+  )
+
+```
+
+  #### Descriptivo Xiomy
+## Analizamos el % de clientes por unidad y banco
+El mayor % de clientes está en el tipo de unidad "Masivo" seguido por "Empresas y Pymes"
+El mayor % de clientes son del banco Davivienda, seguido por Bancolombia y por Banco caja social
+```{r}
+pn1 <- ggplot(muestra, aes(x=UNIDAD)) + ggtitle("Unidad") + 
+      xlab("Unidad") + 
+      geom_bar(aes(y = 100*(..count..)/sum(..count..)), width = 0.5) + 
+      ylab("Percentage") + coord_flip() + theme_minimal()
+
+pn2 <- ggplot(muestra, aes(x=BANCO)) + ggtitle("Banco") + 
+      xlab("Banco") + 
+      geom_bar(aes(y = 100*(..count..)/sum(..count..)), width = 0.5) + 
+      ylab("Percentage") + coord_flip() + theme_minimal()
+
+gpn1 <- ggplotly(pn1)
+gpn2 <- ggplotly(pn2)
+
+subplot(gpn1, gpn2, nrows=2, heights = c(0.35, 0.65))
+
+```
+## Analizamos el % de churn de clientes 
+Solo el  0.15% de clientes de la muestra presenta churn 
+
+```{r}
+pn3 <- ggplot(muestra, aes(x=factor(CHURN) )) + ggtitle("Churn") + 
+      xlab("Churn") + 
+      geom_bar(aes(y = 100*(..count..)/sum(..count..)), width = 0.5) + 
+      ylab("Percentage") + coord_flip() + theme_minimal()
+
+ggplotly(pn3)
+
+
+```
+## Balance datos
+
+```{r}
+table(muestra$CHURN)
+```
+
+## Analizamos churn por fecha
+En febrero y en octubre se presenta el mayor número de deserciones (62)
+```{r}
+muestra %>%
+    filter(CHURN == 1) %>%
+    group_by(MES) %>%
+    summarise(n = n()) %>%
+    plot_ly( x = ~MES, y = ~n, type = 'scatter', mode = 'lines')
+
+
+```
+
+## Analizamos el % de churn de clientes por unidad
+El mayor número de clientes con churn está en el tipo de unidad "Masivo" (269)
+La mayor proporción de % de clientes con churn está en el tipo de unidad "Redes Inteligentes" seguido por Masivo
+
+```{r}
+chun <-  ggplot(data = muestra, aes(x = UNIDAD, fill = factor(CHURN))) + 
+  geom_bar() + theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
+
+ggplotly(chun)
+
+prop.table(table(muestra$UNIDAD, muestra$CHURN), 1) * 100
+
+
+```
+## Analizamos el % de churn de clientes por Banco
+El mayor # de clientes con churn son del Banco Caja Social (106), seguido por Bancolombia (99)
+La mayor proporción de % de clientes con churn son del banco Pichincha 2 de 786, seguido por el Banco Caja Social
+```{r}
+chbc <-  ggplot(data = muestra, aes(x = BANCO, fill = factor(CHURN))) + 
+  geom_bar() + theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
+
+ggplotly(chbc)
+
+prop.table(table(muestra$BANCO, muestra$CHURN), 1) * 100
+
+```
+
+
+## Analizamos los clientes por la unidad
+La unidad con mayor número de transacciones son los comercios estratégicos donde predomina la venta presente seguido por Redes inteligentes donde el mayor número de transacciones se hace a través de venta no presente
+```{r}
+
+gr_UNIDAD= muestra %>%
+  group_by(UNIDAD, AMBIENTE) %>% 
+  summarise(STRX = sum(TRX), SVALOR=sum(VALOR/1000000))
+
+
+ggplot(gr_UNIDAD,aes(y=STRX/1000,x=reorder(UNIDAD,-STRX), fill=AMBIENTE))+
+  geom_bar(stat="identity", position="dodge") +
+  labs(
+    title = "Cantidad de Transacciones por Unidad",
+    subtitle = "",
+    caption = "Muestra de 300 mil transacciones ",
+    y = "Cantidad de Transacciones/1000",
+    x = "Unidad"
+  ) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
+```
+
+
+
+## Analizamos los clientes por banco
+El Banco con mayo cantidad de transacciones es Davivienda donde los tipo de ambiente es equilibrado, seguido por Bancolombia donde predomina la venta presente y por Banco de Occidente donde se hacen más transacciones de venta no presente
+```{r}
+gr_BANCO= muestra %>%
+  group_by(BANCO, AMBIENTE) %>% 
+  summarise(STRX = sum(TRX), SVALOR=sum(VALOR/1000000))
+
+
+ggplot(gr_BANCO,aes(y=STRX/1000,x=reorder(BANCO,-STRX), fill=AMBIENTE))+
+  geom_bar(stat="identity", position="dodge") +
+  labs(
+    title = "Cantidad de Transacciones por Banco",
+    subtitle = "",
+    caption = "Muestra de 300 mil transacciones ",
+    y = "Cantidad de Transacciones/1000",
+    x = "Banco"
+  ) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
+```
+## Analizamos Valores en la liena de tiempo por Unidad
+Los comercios estratégicos generan los valores de transacciones más altos
+```{r}
+gr_fechaun= muestra %>%
+  group_by(MES, UNIDAD,AMBIENTE) %>% 
+  summarise(SVALOR=sum(VALOR/1000000))
+
+fecha <-  ggplot(gr_fechaun,aes(y=SVALOR,x=MES, fill=UNIDAD))+
+  geom_bar(stat="identity") +
+  labs(
+    title = "Valor de las Transacciones por Mes",
+    subtitle = "",
+    caption = "Muestra de 300 mil transacciones ",
+    y = "Valor de las Transacciones (en millones de pesos)",
+    x = "Mes"
+  ) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
+
+ggplotly(fecha)
+```
+## Analizamos Valores en la liena de tiempo por Banco
+
+```{r}
+gr_fechabc= muestra %>%
+  group_by(MES, BANCO,AMBIENTE) %>% 
+  summarise(SVALOR=sum(VALOR/1000000))
+
+fechabc <-  ggplot(gr_fechabc,aes(y=SVALOR,x=MES, fill=BANCO))+
+  geom_bar(stat="identity") +
+  labs(
+    title = "Valor de las Transacciones por Mes",
+    subtitle = "",
+    caption = "Muestra de 300 mil transacciones ",
+    y = "Valor de las Transacciones (en millones de pesos)",
+    x = "Mes"
+  ) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
+
+ggplotly(fechabc)
+```
+
+## Analizamos las PQRs por Unidad
+En Diciembre se presenta el mayor número de PQRs
+Las unidades con más PQRs son los "comercios estratégicos" y "Empresas y Pymes"
+```{r}
+gr_pqrun= muestra %>%
+  group_by(MES, UNIDAD,AMBIENTE) %>% 
+  summarise(PQRs = sum(CANTIDAD_PQR))
+
+pqrsun <-  ggplot(gr_pqrun,aes(y=PQRs,x=MES, fill=UNIDAD))+
+  geom_bar(stat="identity") +
+  labs(
+    title = "PQRs por Mes",
+    subtitle = "",
+    caption = "Muestra de 300 mil transacciones ",
+    y = "PQRs",
+    x = "Mes"
+  ) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
+
+ggplotly(pqrsun)
+```
+
+
+## Analizamos las PQRs por Banco
+En Diciembre se presenta el mayor número de PQRs
+El banco con más PQRs es Davivienda
+```{r}
+gr_pqrbc= muestra %>%
+  group_by(MES, BANCO,AMBIENTE) %>% 
+  summarise(PQRs = sum(CANTIDAD_PQR))
+
+pqrsbc <-  ggplot(gr_pqrbc,aes(y=PQRs,x=MES, fill=BANCO))+
+  geom_bar(stat="identity") +
+  labs(
+    title = "PQRs por Mes",
+    subtitle = "",
+    caption = "Muestra de 300 mil transacciones ",
+    y = "PQRs",
+    x = "Mes"
+  ) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
+
+ggplotly(pqrsbc)
+```
